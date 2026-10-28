@@ -30,6 +30,7 @@ import java.util.UUID;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -287,7 +288,7 @@ class ActivationRequestControllerTest {
 					.andExpect(header().string("X-Correlation-Id", "abc-12345-def"));
 
 			mockMvc.perform(get("/api/v1/requests").with(reader()).header("X-Correlation-Id", "bad\nvalue"))
-					.andExpect(header().string("X-Correlation-Id", not(containsString("bad"))));
+					.andExpect(header().string("X-Correlation-Id", matchesPattern("[0-9a-f]{32}")));
 		}
 
 	}
