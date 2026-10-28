@@ -1,0 +1,1609 @@
+{
+  "info": {
+    "_postman_id": "65437910-385e-5b93-9148-5e84d5735661",
+    "name": "Activation Service",
+    "description": "Cenários do Activation Service para o ambiente `docker compose up --build`.\n\n**Autenticação automática:** o script da collection obtém tokens no servidor OAuth2 simulado (*client credentials*) para três consumidores: `crm-system` (leitura + escrita), `bi-system` (só leitura) e `billing-system` (outro consumidor).\n\n**Ordem:** as pastas foram pensadas para rodar em sequência (Collection Runner ou Newman). A pasta 2 e a 4 usam a solicitação criada na pasta 1.\n\n**Repetir:** execute *0. Preparação → Iniciar nova rodada* para gerar novos `externalId`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Obtém (e renova perto de expirar) os tokens usados pela collection no servidor OAuth2 simulado.",
+          "// Fluxo client_credentials: o client_id vira o \"sub\" do JWT e identifica o sistema consumidor.",
+          "const authUrl = pm.variables.get('authUrl');",
+          "",
+          "function ensureToken(varName, clientId, scope) {",
+          "    const token = pm.collectionVariables.get(varName);",
+          "    const expiresAt = Number(pm.collectionVariables.get(varName + 'ExpiresAt') || 0);",
+          "    if (token && Date.now() < expiresAt - 30000) {",
+          "        return;",
+          "    }",
+          "    pm.sendRequest({",
+          "        url: authUrl + '/token',",
+          "        method: 'POST',",
+          "        header: { 'Content-Type': 'application/x-www-form-urlencoded' },",
+          "        body: {",
+          "            mode: 'urlencoded',",
+          "            urlencoded: [",
+          "                { key: 'grant_type', value: 'client_credentials' },",
+          "                { key: 'client_id', value: clientId },",
+          "                { key: 'client_secret', value: 'qualquer' },",
+          "                { key: 'scope', value: scope }",
+          "            ]",
+          "        }",
+          "    }, (err, res) => {",
+          "        if (err || res.code !== 200) {",
+          "            console.error('Falha ao obter token ' + varName + ' (o docker compose está no ar?)', err || res.code);",
+          "            return;",
+          "        }",
+          "        const body = res.json();",
+          "        pm.collectionVariables.set(varName, body.access_token);",
+          "        pm.collectionVariables.set(varName + 'ExpiresAt', String(Date.now() + body.expires_in * 1000));",
+          "    });",
+          "}",
+          "",
+          "// Sufixo dos externalId: cada rodada usa identificadores novos (veja \"Iniciar nova rodada\").",
+          "if (!pm.collectionVariables.get('runId')) {",
+          "    pm.collectionVariables.set('runId', Date.now().toString(36).toUpperCase());",
+          "}",
+          "",
+          "ensureToken('accessToken', pm.variables.get('clientId'), 'activation:read activation:write');",
+          "ensureToken('readOnlyToken', 'bi-system', 'activation:read');",
+          "ensureToken('otherClientToken', 'billing-system', 'activation:read activation:write');"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "managementUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "authUrl",
+      "value": "http://localhost:8090/activation"
+    },
+    {
+      "key": "clientId",
+      "value": "crm-system"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "requestId",
+      "value": ""
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "readOnlyToken",
+      "value": ""
+    },
+    {
+      "key": "otherClientToken",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Preparação",
+      "id": "d139abd8-9166-5486-9988-78b1daef9cb2",
+      "description": "Tokens e início de rodada. A collection obtém os tokens automaticamente; estas requisições servem para inspecioná-los ou forçar uma rodada nova.",
+      "item": [
+        {
+          "name": "Iniciar nova rodada (gera novo runId)",
+          "id": "a9caeddd-04dc-5f19-b07c-53c5a1b072c4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{managementUrl}}/actuator/health/liveness",
+            "description": "Gera um novo `runId`, usado como sufixo dos `externalId`. Execute antes de repetir os cenários de criação, senão eles cairão no caminho de repetição (200) em vez de criar (201).",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('runId', Date.now().toString(36).toUpperCase());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('aplicação viva', () => pm.response.to.have.status(200));",
+                  "console.log('runId =', pm.collectionVariables.get('runId'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Obter token — crm-system (leitura + escrita)",
+          "id": "65d59cb8-2f12-523b-80e0-d10cf22c21f7",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{authUrl}}/token",
+            "description": "Fluxo OAuth 2.0 *client credentials* no servidor simulado. O `client_id` vira o claim `sub`, que a API usa como dono das solicitações.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{clientId}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "qualquer"
+                },
+                {
+                  "key": "scope",
+                  "value": "activation:read activation:write"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('token emitido', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.access_token);",
+                  "pm.collectionVariables.set('accessTokenExpiresAt', String(Date.now() + body.expires_in * 1000));",
+                  "const claims = JSON.parse(atob(body.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));",
+                  "console.log('claims', claims);",
+                  "pm.test('aud = activation-service', () => pm.expect([].concat(claims.aud)).to.include('activation-service'));",
+                  "pm.test('escopos de leitura e escrita', () => pm.expect(claims.scope).to.include('activation:write'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Criação e duplicidade",
+      "id": "e139530a-12f4-5aff-8975-ce0af10f29dc",
+      "description": "Criação idempotente por `externalId`.",
+      "item": [
+        {
+          "name": "Criar solicitação (201)",
+          "id": "ad395e5d-34f3-57f7-a59a-88f667d21084",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-001"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Cria uma solicitação nova. Resposta `201 Created` com header `Location` e status `PENDING`; a ativação acontece em background.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-001\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"INTERNET-500\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('header Location aponta para o recurso', () => pm.expect(pm.response.headers.get('Location')).to.include(body.id));",
+                  "pm.test('status inicial PENDING', () => pm.expect(body.status).to.eql('PENDING'));",
+                  "pm.test('datas em UTC ISO-8601', () => pm.expect(body.createdAt).to.match(/Z$/));",
+                  "pm.test('correlation id devolvido', () => pm.expect(pm.response.headers.get('X-Correlation-Id')).to.eql('postman-' + pm.collectionVariables.get('runId') + '-001'));",
+                  "pm.collectionVariables.set('requestId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Repetir a mesma solicitação — retry legítimo (200)",
+          "id": "3721760c-f6ec-5a32-a496-1f22a3ef165c",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Mesmo `externalId` e mesmo conteúdo: `200 OK` com o registro existente e header `Idempotent-Replayed: true`. Nenhum registro novo é criado.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-001\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"INTERNET-500\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));",
+                  "pm.test('mesmo id da criação', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('requestId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mesmo externalId com conteúdo diferente (409)",
+          "id": "c6901d14-6e1c-5295-bb39-5bcd955ba3be",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Mesmo `externalId`, `productCode` diferente: `409 Conflict` em Problem Details.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-001\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"TV-100\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});",
+                  "pm.test('type duplicate-request', () => pm.expect(pm.response.json().type).to.include('duplicate-request'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dados inválidos (400)",
+          "id": "7ab84a7e-d33c-5a0d-822c-5a6cd434c954",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Campos vazios, com espaço e acima de 64 caracteres: `400` com a lista `errors` (campo e mensagem).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"\",\n  \"customerId\": \"CUST 10001\",\n  \"productCode\": \"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});",
+                  "const fields = pm.response.json().errors.map(e => e.field);",
+                  "pm.test('aponta os três campos', () => pm.expect(fields).to.include.members(['externalId', 'customerId', 'productCode']));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Campo obrigatório ausente (400)",
+          "id": "217abb84-0cd8-5a24-93fe-f334a9622877",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Sem `customerId`: `400` com `{ field: customerId, message: é obrigatório }`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-002\",\n  \"productCode\": \"INTERNET-500\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('customerId é obrigatório', () => pm.expect(pm.response.json().errors).to.deep.include({ field: 'customerId', message: 'é obrigatório' }));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "JSON malformado (400)",
+          "id": "158f1ccd-6582-5a8d-88f6-23c61be55313",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Corpo que não é um JSON válido: `400 malformed-request`, sem detalhes do parser.",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"externalId\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Consulta e listagem",
+      "id": "8a15f8e8-47ee-5e84-91a7-db091a86cb27",
+      "description": "Consulta por id e listagem paginada com filtros.",
+      "item": [
+        {
+          "name": "Consultar solicitação por id (200)",
+          "id": "6cba6618-81f8-5dbf-892e-1db3b04f483e",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{requestId}}",
+            "description": "Consulta a solicitação criada em *1. Criação*. Após alguns instantes, o status é `COMPLETED`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-');",
+                  "pm.test('status esperado: COMPLETED', () => pm.expect([\"COMPLETED\"]).to.include(body.status));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar id inexistente (404)",
+          "id": "ba39ab30-5d48-5017-a726-15574a753c29",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/00000000-0000-0000-0000-000000000000",
+            "description": "Id que não existe: `404` em Problem Details.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar com id inválido (400)",
+          "id": "03cf7b63-1919-598f-a2d8-b5f1324ec92c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/nao-e-um-uuid",
+            "description": "Id fora do formato UUID: `400`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar com filtros e paginação",
+          "id": "bbef74df-aadf-557d-8944-c80f328474e4",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests?status=COMPLETED&customerId=CUST-10001&page=0&size=20",
+            "description": "Lista apenas as solicitações do consumidor autenticado, das mais recentes para as mais antigas.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('estrutura de página', () => pm.expect(body).to.include.keys('content', 'page', 'size', 'totalElements', 'totalPages'));",
+                  "pm.test('apenas COMPLETED', () => body.content.forEach(r => pm.expect(r.status).to.eql('COMPLETED')));",
+                  "pm.test('contém a solicitação criada', () => pm.expect(body.content.map(r => r.id)).to.include(pm.collectionVariables.get('requestId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar com tamanho de página acima do limite (400)",
+          "id": "563a36c9-1f47-571d-9666-ed6d1cf12379",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests?size=500",
+            "description": "`size` aceita de 1 a 100: `400` apontando o parâmetro.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('aponta o parâmetro size', () => pm.expect(pm.response.json().errors[0].field).to.eql('size'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Listar com status desconhecido (400)",
+          "id": "e6be32da-dfb7-5cb9-a75e-f1998dc675f5",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests?status=DONE",
+            "description": "Status fora de PENDING/PROCESSING/COMPLETED/FAILED: `400`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Cenários do provedor externo",
+      "id": "fbf28ab9-99e6-590b-bb83-84cc64dd2041",
+      "description": "Um par *criar → consultar* por comportamento do provedor. O processamento é assíncrono: repita a consulta para acompanhar a evolução do status e do `failureReason`.",
+      "item": [
+        {
+          "name": "Criar — INVALID-PRODUCT (400 → recusa definitiva)",
+          "id": "81dfe244-87c2-53b5-8ffc-3d1080f8b4e0",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-invalid-product"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O provedor responde `400`: a solicitação vai para `FAILED` sem nova tentativa. O provedor simulado (WireMock) escolhe o comportamento pelo `productCode`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-P01\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"INVALID-PRODUCT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('invalidProductId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar — INVALID-PRODUCT",
+          "id": "f227869a-8d4f-5dc6-9602-b1fdd4e018fb",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{invalidProductId}}",
+            "description": "O provedor responde `400`: a solicitação vai para `FAILED` sem nova tentativa.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-');",
+                  "pm.test('status esperado: FAILED', () => pm.expect([\"FAILED\"]).to.include(body.status));",
+                  "pm.test('failureReason contém HTTP_400', () => pm.expect(body.failureReason || '').to.include('HTTP_400'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar — UNSTABLE-PRODUCT (500 → retry com backoff)",
+          "id": "b4e0ed1d-2db7-5670-97d8-c2b49293b5aa",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-unstable-product"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O provedor responde `500`: a solicitação fica em `PROCESSING`, com novas tentativas e backoff exponencial (~2 s, 4 s, 8 s, 16 s). Após 5 tentativas (~40 s), vai para `FAILED` com `MAX_ATTEMPTS_EXCEEDED (último erro: HTTP_500)`. O provedor simulado (WireMock) escolhe o comportamento pelo `productCode`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-P02\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"UNSTABLE-PRODUCT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('unstableProductId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar — UNSTABLE-PRODUCT",
+          "id": "ddb77a29-e7e3-5b45-9381-6e3b073f9e7c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{unstableProductId}}",
+            "description": "O provedor responde `500`: a solicitação fica em `PROCESSING`, com novas tentativas e backoff exponencial (~2 s, 4 s, 8 s, 16 s). Após 5 tentativas (~40 s), vai para `FAILED` com `MAX_ATTEMPTS_EXCEEDED (último erro: HTTP_500)`. Observação: consulte de novo após ~40 s para ver FAILED.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-', \"consulte de novo ap\\u00f3s ~40 s para ver FAILED\");",
+                  "pm.test('status esperado: PROCESSING ou FAILED', () => pm.expect([\"PROCESSING\", \"FAILED\"]).to.include(body.status));",
+                  "pm.test('failureReason contém HTTP_500', () => pm.expect(body.failureReason || '').to.include('HTTP_500'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar — SLOW-PRODUCT (timeout → retry com a mesma chave de idempotência)",
+          "id": "8e41bb38-2cbe-5802-b4e0-085e163c6880",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-slow-product"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O provedor demora 10 s e o timeout de leitura é 5 s: `READ_TIMEOUT`, novas tentativas com a mesma `Idempotency-Key`. Após 5 tentativas (~1 min), `FAILED`. O provedor simulado (WireMock) escolhe o comportamento pelo `productCode`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-P03\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"SLOW-PRODUCT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('slowProductId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar — SLOW-PRODUCT",
+          "id": "3a48e27b-e71c-5e24-b97c-7008f8b1efd9",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{slowProductId}}",
+            "description": "O provedor demora 10 s e o timeout de leitura é 5 s: `READ_TIMEOUT`, novas tentativas com a mesma `Idempotency-Key`. Após 5 tentativas (~1 min), `FAILED`. Observação: o 1º timeout ocorre ~5 s após a criação.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-', \"o 1\\u00ba timeout ocorre ~5 s ap\\u00f3s a cria\\u00e7\\u00e3o\");",
+                  "pm.test('status esperado: PENDING ou PROCESSING ou FAILED', () => pm.expect([\"PENDING\", \"PROCESSING\", \"FAILED\"]).to.include(body.status));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar — THROTTLED-PRODUCT (429 + Retry-After: 30)",
+          "id": "bf3c95af-225b-52ef-843e-538b4b019df2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-throttled-product"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O provedor responde `429` com `Retry-After: 30`: as novas tentativas respeitam os 30 s pedidos. O provedor simulado (WireMock) escolhe o comportamento pelo `productCode`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-P04\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"THROTTLED-PRODUCT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('throttledProductId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar — THROTTLED-PRODUCT",
+          "id": "dc505b49-0e6a-5b89-9327-f686e01672c5",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{throttledProductId}}",
+            "description": "O provedor responde `429` com `Retry-After: 30`: as novas tentativas respeitam os 30 s pedidos.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-');",
+                  "pm.test('status esperado: PROCESSING', () => pm.expect([\"PROCESSING\"]).to.include(body.status));",
+                  "pm.test('failureReason contém HTTP_429', () => pm.expect(body.failureReason || '').to.include('HTTP_429'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Criar — UNAVAILABLE-PRODUCT (503 + Retry-After: 10)",
+          "id": "84d15bff-73cf-5fc1-809d-640762d89fe4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Correlation-Id",
+                "value": "postman-{{runId}}-unavailable-product"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O provedor responde `503` com `Retry-After: 10`: as novas tentativas respeitam os 10 s pedidos. O provedor simulado (WireMock) escolhe o comportamento pelo `productCode`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-P05\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"UNAVAILABLE-PRODUCT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('unavailableProductId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar — UNAVAILABLE-PRODUCT",
+          "id": "1954ca64-586c-5b5b-b539-322ddba047cc",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{unavailableProductId}}",
+            "description": "O provedor responde `503` com `Retry-After: 10`: as novas tentativas respeitam os 10 s pedidos.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{accessToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Aguarda o processamento assíncrono antes de consultar.",
+                  "setTimeout(() => {}, 1500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "console.log('status =', body.status, '| failureReason =', body.failureReason || '-');",
+                  "pm.test('status esperado: PROCESSING', () => pm.expect([\"PROCESSING\"]).to.include(body.status));",
+                  "pm.test('failureReason contém HTTP_503', () => pm.expect(body.failureReason || '').to.include('HTTP_503'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Segurança",
+      "id": "bf787e42-bb55-5608-9ad0-7151daf71a2d",
+      "description": "Autenticação (401), autorização por escopo (403) e isolamento entre consumidores (BOLA).",
+      "item": [
+        {
+          "name": "Sem token (401)",
+          "id": "16a98511-d9a4-5737-8d1e-ad77ca70ccc0",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Sem header `Authorization`: `401` com `WWW-Authenticate: Bearer`.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('WWW-Authenticate: Bearer', () => pm.expect(pm.response.headers.get('WWW-Authenticate')).to.include('Bearer'));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token inválido (401)",
+          "id": "116a0cb8-0226-5899-92df-f6838100bc79",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "JWT com assinatura inválida: `401`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.assinatura-invalida",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Somente leitura tentando criar (403)",
+          "id": "9b4ea4b6-919b-51ec-9bb4-0ef3b13a7785",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "Token de `bi-system` só com `activation:read`: criar exige `activation:write`, então `403`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-S01\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"INTERNET-500\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{readOnlyToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 Forbidden', () => pm.response.to.have.status(403));",
+                  "",
+                  "pm.test('Content-Type application/problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "});",
+                  "pm.test('Problem Details com correlationId e sem detalhes internos', () => {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('title');",
+                  "    pm.expect(body).to.have.property('correlationId');",
+                  "    pm.expect(pm.response.text()).to.not.match(/Exception|at com\\.|at org\\./);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Somente leitura listando (200)",
+          "id": "6e8dbd09-31bf-5434-acda-558573bcc5c2",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "O mesmo token de leitura pode consultar e listar as suas solicitações.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{readOnlyToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outro consumidor consultando por id (404)",
+          "id": "8f3666dc-c216-5d7b-aee6-2ad3642ef117",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests/{{requestId}}",
+            "description": "`billing-system` tenta ler uma solicitação de `crm-system`: `404`, e não `403`, para não revelar que o id existe (OWASP API1 — BOLA).",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherClientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outro consumidor listando (não vê nada do crm-system)",
+          "id": "8a11e438-ff4c-5785-a612-934155c15c97",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "A listagem é sempre filtrada pelo consumidor autenticado.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherClientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('não contém solicitações do crm-system', () => pm.expect(pm.response.json().content.map(r => r.id)).to.not.include(pm.collectionVariables.get('requestId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Outro consumidor reutilizando o externalId (409)",
+          "id": "234b1574-6072-55c5-b633-169ed38461e4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/requests",
+            "description": "`billing-system` envia o mesmo `externalId` e conteúdo de `crm-system`: `409`, sem devolver o registro do outro consumidor.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"externalId\": \"EXT-{{runId}}-001\",\n  \"customerId\": \"CUST-10001\",\n  \"productCode\": \"INTERNET-500\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherClientToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "pm.test('não vaza o registro', () => pm.expect(pm.response.json()).to.not.have.property('id'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Operação (Actuator e documentação)",
+      "id": "206b3ac7-b09a-5b1e-bbcb-92adfb174ef6",
+      "description": "Porta de gerenciamento separada (8081), não exposta publicamente em produção.",
+      "item": [
+        {
+          "name": "Liveness",
+          "id": "738e0e16-5769-5c5c-9beb-a176300325c2",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{managementUrl}}/actuator/health/liveness",
+            "description": "Só a JVM: usado para reiniciar a instância.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Readiness",
+          "id": "bae618b9-3804-5c5d-9185-409d138790af",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{managementUrl}}/actuator/health/readiness",
+            "description": "Inclui o banco: usado para tirar a instância do balanceamento.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Métricas Prometheus",
+          "id": "c3c62a69-c7aa-5110-9bfa-666639ddbadb",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{managementUrl}}/actuator/prometheus",
+            "description": "Procure por `activation_requests_received_total`, `activation_requests_finished_total`, `activation_provider_outcomes_total` e `http_client_requests_seconds` (latência do provedor).",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('métricas de negócio expostas', () => pm.expect(pm.response.text()).to.include('activation_requests_received_total'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenAPI (contrato da API)",
+          "id": "282e3987-f633-5ddb-b757-e6dabbf5d095",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v3/api-docs",
+            "description": "Contrato OpenAPI com as regras de validação. Interface: {{baseUrl}}/swagger-ui.html",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('documento OpenAPI', () => pm.expect(pm.response.json().paths).to.have.property('/api/v1/requests'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
