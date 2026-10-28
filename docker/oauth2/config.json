@@ -1,0 +1,19 @@
+{
+  "tokenCallbacks": [
+    {
+      "issuerId": "activation",
+      "tokenExpiry": 3600,
+      "requestMappings": [
+        {
+          "requestParam": "grant_type",
+          "match": "client_credentials",
+          "claims": {
+            "sub": "${clientId}",
+            "aud": ["activation-service"],
+            "scope": "${scope}"
+          }
+        }
+      ]
+    }
+  ]
+}
