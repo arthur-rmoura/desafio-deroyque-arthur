@@ -1,0 +1,22 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:activation;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Nunca acessado: os testes injetam o JWT já autenticado (spring-security-test).
+          jwk-set-uri: http://localhost:1/jwks
+
+activation:
+  provider:
+    connect-timeout: 500ms
+    read-timeout: 500ms
+  processing:
+    initial-backoff: 10ms
+    max-backoff: 50ms
+    lease-duration: 2s
+    # Testes acionam a varredura explicitamente quando precisam dela.
+    scheduler-enabled: false
