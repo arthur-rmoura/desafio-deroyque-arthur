@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.time.Clock;
-import java.util.random.RandomGenerator;
+import java.util.Random;
 
 @Configuration(proxyBeanMethods = false)
 class ProcessingConfiguration {
@@ -30,7 +30,9 @@ class ProcessingConfiguration {
 
 	@Bean
 	RetryPolicy retryPolicy(ProcessingProperties properties) {
-		return new RetryPolicy(properties.initialBackoff(), properties.maxBackoff(), RandomGenerator.getDefault());
+		// java.util.Random: thread-safe e do módulo java.base. RandomGenerator.getDefault() depende do módulo
+		// jdk.random, ausente em JREs enxutos como o da imagem Docker.
+		return new RetryPolicy(properties.initialBackoff(), properties.maxBackoff(), new Random());
 	}
 
 	/**

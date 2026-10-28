@@ -6,14 +6,14 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import java.time.Duration;
 import java.util.Optional;
-import java.util.random.RandomGenerator;
+import java.util.Random;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RetryPolicyTest {
 
 	private final RetryPolicy policy = new RetryPolicy(Duration.ofSeconds(1), Duration.ofSeconds(10),
-			RandomGenerator.getDefault());
+			new Random());
 
 	@ParameterizedTest(name = "após {0} falha(s): entre {1}ms e {2}ms")
 	@CsvSource({
