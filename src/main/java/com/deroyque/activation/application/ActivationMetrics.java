@@ -17,8 +17,8 @@ public class ActivationMetrics {
 
 	public ActivationMetrics(MeterRegistry registry) {
 		this.registry = registry;
-		this.created = Counter.builder("activation.requests.created")
-				.description("Solicitações de ativação criadas")
+		this.created = Counter.builder("activation.requests.received")
+				.description("Solicitações de ativação registradas")
 				.register(registry);
 	}
 
