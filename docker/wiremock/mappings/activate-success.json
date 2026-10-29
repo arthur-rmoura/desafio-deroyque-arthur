@@ -1,0 +1,12 @@
+{
+  "priority": 10,
+  "request": {
+    "method": "POST",
+    "url": "/provider/v1/activate"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": { "status": "ACTIVATED" }
+  }
+}

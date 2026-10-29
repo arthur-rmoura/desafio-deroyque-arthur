@@ -1,0 +1,11 @@
+target/
+.git/
+.idea/
+.vscode/
+.github/
+docs/
+docker/
+postman/
+*.md
+*.html
+*.postman_collection.json
