@@ -8,3 +8,4 @@ docker/
 postman/
 *.md
 *.html
+*.postman_collection.json
