@@ -36,7 +36,8 @@ public class SecurityConfiguration {
 						.requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html", "/error").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/v1/requests").hasAuthority(SCOPE_WRITE)
 						.requestMatchers(HttpMethod.GET, "/api/v1/requests", "/api/v1/requests/*").hasAuthority(SCOPE_READ)
-						.anyRequest().authenticated())
+						// Nega por padrão: rota ou método sem regra explícita fica bloqueado até ganhar um escopo.
+						.anyRequest().denyAll())
 				.oauth2ResourceServer(oauth2 -> oauth2
 						.jwt(Customizer.withDefaults())
 						.authenticationEntryPoint(problemHandler)

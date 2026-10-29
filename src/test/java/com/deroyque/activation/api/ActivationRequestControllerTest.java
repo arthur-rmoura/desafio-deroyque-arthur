@@ -38,6 +38,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -280,6 +281,24 @@ class ActivationRequestControllerTest {
 		void returns403WhenWriteOnlyClientTriesToRead() throws Exception {
 			mockMvc.perform(get("/api/v1/requests").with(writer()))
 					.andExpect(status().isForbidden());
+		}
+
+		@Test
+		void deniesRouteWithoutExplicitRuleEvenWithAllScopes() throws Exception {
+			mockMvc.perform(delete("/api/v1/requests/{id}", UUID.randomUUID())
+							.with(client("crm", "activation:read", "activation:write")))
+					.andExpect(status().isForbidden())
+					.andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+					.andExpect(jsonPath("$.title").value("Acesso negado"));
+
+			verifyNoInteractions(service);
+		}
+
+		@Test
+		void requiresAuthenticationOnRouteWithoutExplicitRule() throws Exception {
+			mockMvc.perform(delete("/api/v1/requests/{id}", UUID.randomUUID()))
+					.andExpect(status().isUnauthorized())
+					.andExpect(header().string("WWW-Authenticate", containsString("Bearer")));
 		}
 
 		@Test
