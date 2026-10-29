@@ -292,7 +292,7 @@ para o consumidor stack trace, nome de classe ou mensagem interna.
 | Registro inexistente (ou de outro consumidor) | 404 | `not-found` |
 | Solicitação duplicada com conteúdo diferente | 409 | `duplicate-request` |
 | Sem token, token inválido ou expirado | 401 | `unauthorized` (com `WWW-Authenticate: Bearer`) |
-| Escopo insuficiente | 403 | `forbidden` |
+| Escopo insuficiente, ou rota/método sem regra de autorização | 403 | `forbidden` |
 | Erro inesperado | 500 | `internal-error` (detalhes só no log, com o mesmo `correlationId`) |
 
 ```json
@@ -325,6 +325,10 @@ a solicitação. Elas aparecem no status (`PROCESSING` em retry ou `FAILED`) e n
   por variáveis de ambiente.
 - **Autorização por escopo:** `activation:write` cria (`POST`) e `activation:read` consulta (`GET`). Um
   sistema de BI, por exemplo, recebe só leitura.
+- **Nega por padrão:** as regras ficam todas em `SecurityConfiguration`, e a última é
+  `anyRequest().denyAll()`. Rota ou método sem regra explícita (um `DELETE`, por exemplo) é recusado com
+  **403**, mesmo para um token com todos os escopos (**401** sem token). Assim, um endpoint novo só funciona
+  depois que alguém declara qual escopo ele exige: esquecer a regra bloqueia o acesso em vez de abri-lo.
 - **Isolamento entre consumidores (OWASP API1, BOLA):** o `sub` do token (o consumidor) é gravado na
   solicitação. Consulta e listagem só retornam solicitações do próprio consumidor; uma solicitação de outro
   responde **404** (não 403), para não revelar que o id existe.
@@ -373,7 +377,7 @@ as peças reais.
 | Unitário (Mockito) | `ActivationDispatcherTest` | sucesso, falha permanente, retry com backoff, `Retry-After`, limite de tentativas, lease, resultado obsoleto descartado |
 | Unitário | `RetryPolicyTest` | crescimento exponencial, jitter dentro dos limites, teto |
 | Componente (WireMock) | `HttpActivationProviderTest` | headers enviados (idempotência, correlação, credencial), classificação de cada status, `Retry-After` em segundos e data, **timeout de leitura**, conexão recusada |
-| Slice web (`@WebMvcTest`) | `ActivationRequestControllerTest` | contrato HTTP, validação, formato Problem Details, **401 sem token, 403 por escopo**, correlation id, nenhum detalhe interno no 500 |
+| Slice web (`@WebMvcTest`) | `ActivationRequestControllerTest` | contrato HTTP, validação, formato Problem Details, **401 sem token, 403 por escopo, rota sem regra negada mesmo com todos os escopos**, correlation id, nenhum detalhe interno no 500 |
 | Arquitetura (ArchUnit) | `ArchitectureTest` | direção das dependências entre camadas |
 | Integração (`@SpringBootTest`, H2 + Flyway + WireMock) | `ActivationFlowIT` | fluxo completo assíncrono, recusa, retry com a mesma chave de idempotência, timeout, duplicidade, isolamento entre consumidores |
 | Integração (concorrência) | `H2ConcurrentCreationIT`, `PostgresConcurrentCreationIT` | 16 criações simultâneas → exatamente um registro; no PostgreSQL real via **Testcontainers** |
